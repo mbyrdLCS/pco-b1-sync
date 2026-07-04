@@ -2,7 +2,16 @@
 
 import { pcoListAllPeople, pcoGetPerson, type NormalizedPerson } from "./pco";
 import { b1SavePerson, b1SavePeople, b1DeletePerson, type B1Person } from "./b1";
-import { getB1Id, setMapping, setMappings, allMappings, removeMapping } from "./mapping";
+import {
+  getB1Id,
+  setMapping,
+  setMappings,
+  allMappings,
+  removeMapping,
+  claimCreate,
+  releaseClaim,
+  waitForMapping,
+} from "./mapping";
 import { getCampusMap } from "./campus";
 import { getHouseholdLookup, resolveHouseholdForPerson, type HouseholdAssignment } from "./household";
 
@@ -57,40 +66,65 @@ export type SyncResult = {
 
 /** Upsert one PCO person into B1, recording the id mapping. */
 export async function syncPerson(n: NormalizedPerson): Promise<SyncResult> {
-  const existingId = await getB1Id(n.pcoId);
-  let campusMap = await getCampusMap();
-  if (n.primaryCampusPcoId && !(n.primaryCampusPcoId in campusMap)) {
-    campusMap = await getCampusMap(true);
+  let existingId = await getB1Id(n.pcoId);
+
+  // No mapping yet: claim the create atomically. PCO fires person.created and
+  // email.created as separate near-simultaneous webhooks — without this, both
+  // invocations would create the person in B1 (duplicate).
+  let claimed = false;
+  if (!existingId) {
+    if ((await claimCreate(n.pcoId)) === "claimed") {
+      claimed = true;
+    } else {
+      existingId = await waitForMapping(n.pcoId);
+      if (!existingId) {
+        throw new Error(`concurrent create still in flight for PCO ${n.pcoId} — retry later`);
+      }
+    }
   }
-  let household: HouseholdAssignment | null = null;
+
   try {
-    household = await resolveHouseholdForPerson(n.pcoId, n.child ?? false);
-  } catch {
-    // household resolution is best-effort on the single-person path
+    let campusMap = await getCampusMap();
+    if (n.primaryCampusPcoId && !(n.primaryCampusPcoId in campusMap)) {
+      campusMap = await getCampusMap(true);
+    }
+    let household: HouseholdAssignment | null = null;
+    try {
+      household = await resolveHouseholdForPerson(n.pcoId, n.child ?? false);
+    } catch {
+      // household resolution is best-effort on the single-person path
+    }
+    const saved = await b1SavePerson(toB1Person(n, existingId, campusMap, household));
+    if (!saved?.id) {
+      throw new Error(`B1 save returned no id for PCO ${n.pcoId}`);
+    }
+    await setMapping(n.pcoId, saved.id, n.updatedAt);
+    return {
+      pcoId: n.pcoId,
+      name: `${n.firstName} ${n.lastName}`.trim(),
+      b1Id: saved.id,
+      action: existingId ? "updated" : "created",
+    };
+  } catch (e) {
+    if (claimed) await releaseClaim(n.pcoId); // let a later attempt retry the create
+    throw e;
   }
-  const saved = await b1SavePerson(toB1Person(n, existingId, campusMap, household));
-  if (!saved?.id) {
-    throw new Error(`B1 save returned no id for PCO ${n.pcoId}`);
-  }
-  await setMapping(n.pcoId, saved.id, n.updatedAt);
-  return {
-    pcoId: n.pcoId,
-    name: `${n.firstName} ${n.lastName}`.trim(),
-    b1Id: saved.id,
-    action: existingId ? "updated" : "created",
-  };
 }
 
 export async function syncPersonById(pcoId: string): Promise<SyncResult> {
   return syncPerson(await pcoGetPerson(pcoId));
 }
 
-/** Person deleted in PCO -> delete the mirrored person in B1 and drop the mapping. */
+/** Person deleted in PCO. Behavior is configurable via SYNC_DELETE_MODE:
+ *    "delete" (default) — hard-delete the mirrored person in B1
+ *    "unmap"            — keep the B1 record (and its check-in history), just
+ *                         stop tracking it. Recommended during pilots.       */
 export async function deletePersonByPcoId(
   pcoId: string,
 ): Promise<{ pcoId: string; b1Id?: string; action: string }> {
+  const mode = process.env.SYNC_DELETE_MODE === "unmap" ? "unmap" : "delete";
   const b1Id = await getB1Id(pcoId);
-  if (b1Id) {
+  if (b1Id && mode === "delete") {
     try {
       await b1DeletePerson(b1Id);
     } catch {
@@ -98,7 +132,8 @@ export async function deletePersonByPcoId(
     }
   }
   await removeMapping(pcoId);
-  return { pcoId, b1Id: b1Id ?? undefined, action: b1Id ? "deleted" : "unmapped" };
+  const action = !b1Id ? "unmapped" : mode === "delete" ? "deleted" : "unmapped (kept in B1)";
+  return { pcoId, b1Id: b1Id ?? undefined, action };
 }
 
 export type SyncSummary = {

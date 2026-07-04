@@ -3,6 +3,7 @@ import { authorized, unauthorized } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // large-church backfills need headroom
 
 // POST /api/sync/backfill — pull every PCO person and upsert into B1.
 // Auth: Authorization: Bearer <CRON_SECRET>.

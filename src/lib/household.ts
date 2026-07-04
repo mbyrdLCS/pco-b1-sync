@@ -85,6 +85,12 @@ export async function resolveHouseholdForPerson(
   const data = Array.isArray(page.data) ? page.data : page.data ? [page.data] : [];
   if (data.length === 0) return null;
 
+  // included Person records carry the authoritative child flags for all members
+  const childById = new Map<string, boolean>();
+  for (const inc of page.included ?? []) {
+    if (inc.type === "Person") childById.set(inc.id, inc.attributes.child === true);
+  }
+
   const candidates = data.map((h) => {
     const pc = h.relationships?.primary_contact?.data;
     const memberRefs = Array.isArray(h.relationships?.people?.data)
@@ -94,7 +100,10 @@ export async function resolveHouseholdForPerson(
       id: h.id,
       name: String(h.attributes.name ?? ""),
       primaryContactId: pc && !Array.isArray(pc) ? pc.id : null,
-      members: (memberRefs as { id: string }[]).map((m) => ({ personId: m.id, child: false })),
+      members: (memberRefs as { id: string }[]).map((m) => ({
+        personId: m.id,
+        child: m.id === personId ? isChild : (childById.get(m.id) ?? false),
+      })),
     };
     return { h: household, child: isChild };
   });
@@ -103,7 +112,9 @@ export async function resolveHouseholdForPerson(
   if (!best) return null;
   const b1HouseholdId = await ensureB1Household(best.h.id, best.h.name);
   const role = roleFor(best.h, personId, best.child);
+  // match the batch path: married = an adult (Head/Spouse) in a 2+ ADULT household
+  const adultCount = best.h.members.filter((m) => !m.child).length;
   const maritalStatus =
-    (role === "Head" || role === "Spouse") && best.h.members.length >= 2 ? "Married" : undefined;
+    (role === "Head" || role === "Spouse") && adultCount >= 2 ? "Married" : undefined;
   return { b1HouseholdId, role, maritalStatus };
 }

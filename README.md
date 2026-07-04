@@ -50,7 +50,8 @@ From then on it runs itself: webhooks handle changes in real time, the cron catc
 
 ## Notes
 
-- Deleting a person in PCO **hard-deletes** them in B1 (including B1-side history). If you'd rather anonymize, B1 exposes `/membership/gdpr/people/:id/anonymize`.
+- Deleting a person in PCO **hard-deletes** them in B1 by default (including B1-side history). Set `SYNC_DELETE_MODE=unmap` to keep B1 records on PCO deletes (recommended during pilots), or use B1's `/membership/gdpr/people/:id/anonymize` for GDPR-style scrubbing.
+- Concurrent webhook deliveries for the same new person (PCO sends `person.created` and `email.created` separately) are serialized through an atomic claim in Postgres, so they can't double-create.
 - B1's Person model has no external-id field, so the PCO↔B1 link lives in this service's own `people_map` table — always run `reset-mappings` before pointing an existing deployment at a different church.
 - Local dev without `DATABASE_URL` stores mappings in `data/mapping.json` (gitignored).
 - Changing Vercel env vars requires a redeploy to take effect.

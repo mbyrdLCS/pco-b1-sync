@@ -38,27 +38,38 @@ export async function b1Fetch<T = unknown>(
   init: RequestInit = {},
 ): Promise<T> {
   if (!KEY) throw new Error("B1_API_KEY is not set");
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${KEY}`,
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-    cache: "no-store",
-  });
-  const text = await res.text();
-  let body: unknown = null;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = text;
-  }
-  if (!res.ok) {
+  const method = init.method ?? "GET";
+  // Retry policy: 429 always retries; 5xx retries only for reads/deletes —
+  // a retried POST could double-create if the server committed before erroring.
+  const retry5xx = method === "GET" || method === "DELETE";
+  let lastErr = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${KEY}`,
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+      cache: "no-store",
+    });
+    const text = await res.text();
+    let body: unknown = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+    if (res.ok) return body as T;
     const detail = typeof body === "string" ? body : JSON.stringify(body);
-    throw new Error(`B1 ${init.method ?? "GET"} ${path} -> ${res.status}: ${detail}`);
+    lastErr = `B1 ${method} ${path} -> ${res.status}: ${detail}`;
+    if (res.status === 429 || (retry5xx && res.status >= 500)) {
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    } else {
+      break;
+    }
   }
-  return body as T;
+  throw new Error(lastErr);
 }
 
 /** Create (no id) or update (with id) a single person. Returns the saved record. */

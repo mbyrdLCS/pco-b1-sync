@@ -40,16 +40,59 @@ async function fileWrite(data: FileData) {
 // ---------------------------------------------------------------------------
 // Public API (dispatches to the active backend)
 // ---------------------------------------------------------------------------
+// Sentinel marking "creation in flight" — used to serialize concurrent creates
+// (PCO fires person.created + email.created as separate near-simultaneous
+// webhook deliveries; without a claim, both would create the person in B1).
+const PENDING = "__pending__";
+
 export async function getB1Id(pcoId: string): Promise<string | null> {
   if (hasDb()) {
     await ensureSchema();
     const rows = (await getSql()`select b1_id from people_map where pco_id = ${pcoId}`) as {
       b1_id: string;
     }[];
-    return rows[0]?.b1_id ?? null;
+    const id = rows[0]?.b1_id ?? null;
+    return id === PENDING ? null : id;
   }
   const d = await fileRead();
-  return d.people[pcoId]?.b1Id ?? null;
+  const id = d.people[pcoId]?.b1Id ?? null;
+  return id === PENDING ? null : id;
+}
+
+/** Atomically claim the right to CREATE this person in B1.
+ *  Returns "claimed" if we won (proceed to create), "exists" if another
+ *  invocation holds the claim or the mapping already exists. */
+export async function claimCreate(pcoId: string): Promise<"claimed" | "exists"> {
+  if (hasDb()) {
+    await ensureSchema();
+    const rows = (await getSql()`
+      insert into people_map (pco_id, b1_id, synced_at) values (${pcoId}, ${PENDING}, now())
+      on conflict (pco_id) do nothing
+      returning pco_id
+    `) as { pco_id: string }[];
+    return rows.length > 0 ? "claimed" : "exists";
+  }
+  // file backend is local single-process dev — no real concurrency to guard
+  const d = await fileRead();
+  return d.people[pcoId] ? "exists" : "claimed";
+}
+
+/** Undo a claim after a failed create so a later attempt can retry. */
+export async function releaseClaim(pcoId: string): Promise<void> {
+  if (hasDb()) {
+    await ensureSchema();
+    await getSql()`delete from people_map where pco_id = ${pcoId} and b1_id = ${PENDING}`;
+  }
+}
+
+/** Wait for a concurrent invocation's create to land; returns the real B1 id or null. */
+export async function waitForMapping(pcoId: string, tries = 12): Promise<string | null> {
+  for (let i = 0; i < tries; i++) {
+    const id = await getB1Id(pcoId);
+    if (id) return id;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return null;
 }
 
 export async function setMapping(
@@ -119,6 +162,7 @@ export async function allMappings(): Promise<Record<string, MappingEntry>> {
     }[];
     const out: Record<string, MappingEntry> = {};
     for (const r of rows) {
+      if (r.b1_id === PENDING) continue; // in-flight claim, not a real mapping
       out[r.pco_id] = {
         b1Id: r.b1_id,
         updatedAt: r.pco_updated_at ?? undefined,

@@ -5,6 +5,7 @@ import { authorized, unauthorized } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // large-church backfills need headroom
 
 // Nightly safety-net (Vercel Cron). Re-syncs every PCO person changed since the
 // last run, catching anything a webhook missed. Deletes are handled by the

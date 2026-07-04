@@ -59,14 +59,26 @@ function authHeader(): string {
 export async function pcoFetch(pathOrUrl: string): Promise<JsonApiResponse> {
   if (!APP_ID || !SECRET) throw new Error("PCO_APP_ID / PCO_SECRET are not set");
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${BASE}${pathOrUrl}`;
-  const res = await fetch(url, {
-    headers: { Authorization: authHeader() },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`PCO ${pathOrUrl} -> ${res.status}: ${await res.text()}`);
+  // All PCO calls are GETs, so retrying is always safe. PCO rate-limits at
+  // ~100 req/20s; webhook bursts (bulk edits in PCO) can trip it.
+  let lastErr = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: authHeader() },
+      cache: "no-store",
+    });
+    if (res.ok) return res.json();
+    lastErr = `PCO ${pathOrUrl} -> ${res.status}: ${await res.text()}`;
+    if (res.status === 429) {
+      const retryAfter = Number(res.headers.get("retry-after")) || 20;
+      await new Promise((r) => setTimeout(r, Math.min(retryAfter, 30) * 1000));
+    } else if (res.status >= 500) {
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    } else {
+      break; // 4xx other than 429: not retryable
+    }
   }
-  return res.json();
+  throw new Error(lastErr);
 }
 
 function asArray<T>(v: T | T[] | null | undefined): T[] {
