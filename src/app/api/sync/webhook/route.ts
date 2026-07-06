@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { syncPersonById, deletePersonByPcoId } from "@/lib/sync";
+import { pcoFetch } from "@/lib/pco";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,12 +65,41 @@ export async function POST(req: Request) {
   const results: unknown[] = [];
   for (const event of envelope.data ?? []) {
     const name = event.attributes?.name ?? "";
-    let personId: string | undefined;
+    let inner: Parameters<typeof personIdFromPayload>[0] = {};
     try {
-      personId = personIdFromPayload(JSON.parse(event.attributes?.payload ?? "{}"));
+      inner = JSON.parse(event.attributes?.payload ?? "{}");
     } catch {
       // malformed inner payload — skip
     }
+
+    // Household events carry a household id, not a person id: re-sync every
+    // member so B1 households/roles/marital status follow PCO family changes.
+    if (name.includes("household")) {
+      const householdId = inner?.data?.id;
+      if (!householdId) continue;
+      if (name.includes("destroy")) {
+        // members unknown after destruction; nightly reconcile picks them up
+        results.push({ householdId, event: name, action: "deferred to reconcile" });
+        continue;
+      }
+      try {
+        const hh = await pcoFetch(`/people/v2/households/${householdId}?include=people`);
+        const data = Array.isArray(hh.data) ? hh.data[0] : hh.data;
+        const memberRefs = (data?.relationships?.people?.data ?? []) as { id: string }[];
+        for (const m of memberRefs.slice(0, 25)) {
+          try {
+            results.push({ ...(await syncPersonById(m.id)), event: name });
+          } catch (e) {
+            results.push({ personId: m.id, event: name, error: e instanceof Error ? e.message : String(e) });
+          }
+        }
+      } catch (e) {
+        results.push({ householdId, event: name, error: e instanceof Error ? e.message : String(e) });
+      }
+      continue;
+    }
+
+    const personId = personIdFromPayload(inner);
     if (!personId) continue;
 
     try {

@@ -34,6 +34,9 @@ const EVENTS = [
   "people.v2.events.phone_number.created",
   "people.v2.events.phone_number.updated",
   "people.v2.events.phone_number.destroyed",
+  "people.v2.events.household.created",
+  "people.v2.events.household.updated",
+  "people.v2.events.household.destroyed",
 ];
 
 async function pco(method, path, body) {

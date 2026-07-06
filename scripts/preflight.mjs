@@ -127,7 +127,7 @@ if (webhooksApi.status === 200) {
   const target = `${APP_URL}/api/sync/webhook`;
   const subs = webhooksApi.body.data.filter((s) => s.attributes.url === target);
   const active = subs.filter((s) => s.attributes.active);
-  const NEEDED = 9;
+  const NEEDED = 12;
   if (active.length >= NEEDED) ok(`${active.length}/${NEEDED} webhook subscriptions active → ${target}`);
   else if (subs.length > 0) wn(`only ${active.length}/${NEEDED} subscriptions active — run: node scripts/register-pco-webhooks.mjs ${target}`);
   else wn(`no webhook subscriptions for this URL — run: node scripts/register-pco-webhooks.mjs ${target}`);
