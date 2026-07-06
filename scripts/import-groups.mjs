@@ -111,7 +111,7 @@ for (const p of plan) {
   if (!group) {
     group = (await b1("/membership/groups", {
       method: "POST",
-      body: JSON.stringify([{ name: p.name, categoryName: p.category, about: p.about, trackAttendance: true }]),
+      body: JSON.stringify([{ name: p.name, categoryName: p.category, about: p.about, trackAttendance: true, tags: "standard" }]),
     }))[0];
     existingGroups.set(p.name.toLowerCase(), group);
     created++;
