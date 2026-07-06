@@ -2,8 +2,11 @@
 // category) plus memberships with leader flags and join dates. Run AFTER the
 // people migration — membership linking needs data/mapping.json.
 //
-//   node scripts/import-groups.mjs           # DRY RUN — prints the plan
-//   node scripts/import-groups.mjs --apply   # create groups + members in B1
+//   node scripts/import-groups.mjs                   # DRY RUN — prints the plan
+//   node scripts/import-groups.mjs --apply           # create groups + add members
+//   node scripts/import-groups.mjs --apply --prune   # ALSO remove members who left
+//                                                    # in PCO — run at final switchover
+//                                                    # so B1 groups exactly match PCO
 //
 // Idempotent: groups matched by name, existing members skipped. Archived PCO
 // groups are excluded. Only reads from PCO — writes go to B1 only.
@@ -20,6 +23,7 @@ const PCO_BASE = env.PCO_API_BASE || "https://api.planningcenteronline.com";
 const B1_BASE = env.B1_API_BASE || "https://api.churchapps.org";
 const PCO_AUTH = "Basic " + Buffer.from(`${env.PCO_APP_ID}:${env.PCO_SECRET}`).toString("base64");
 const APPLY = process.argv.includes("--apply");
+const PRUNE = process.argv.includes("--prune");
 
 async function pco(path) {
   const res = await fetch(PCO_BASE + path, { headers: { Authorization: PCO_AUTH } });
@@ -97,7 +101,11 @@ if (!APPLY) process.exit(0);
 
 // APPLY
 const existingGroups = new Map(((await b1("/membership/groups")) ?? []).map((g) => [g.name?.trim().toLowerCase(), g]));
-let created = 0, membersAdded = 0, membersSkipped = 0, unmappedSkipped = 0;
+let created = 0, membersAdded = 0, membersSkipped = 0, unmappedSkipped = 0, membersRemoved = 0;
+if (PRUNE && mappable < totalMembers * 0.8) {
+  console.error("REFUSING --prune: less than 80% of PCO members are linkable via the mapping — pruning now would remove valid members. Run the people migration first.");
+  process.exit(1);
+}
 for (const p of plan) {
   let group = existingGroups.get(p.name.toLowerCase());
   if (!group) {
@@ -108,7 +116,8 @@ for (const p of plan) {
     existingGroups.set(p.name.toLowerCase(), group);
     created++;
   }
-  const existing = new Set((((await b1(`/membership/groupmembers?groupId=${group.id}`)) ?? [])).map((m) => m.personId));
+  const existingRows = (await b1(`/membership/groupmembers?groupId=${group.id}`)) ?? [];
+  const existing = new Map(existingRows.map((m) => [m.personId, m.id]));
   const toAdd = [];
   for (const m of p.members) {
     const b1Id = peopleMap[m.pcoPersonId]?.b1Id;
@@ -120,5 +129,18 @@ for (const p of plan) {
     await b1("/membership/groupmembers", { method: "POST", body: JSON.stringify(toAdd.slice(i, i + 100)) });
   }
   membersAdded += toAdd.length;
+
+  // --prune: make this group's B1 roster exactly match PCO (remove leavers).
+  // Only touches groups that came from PCO — B1-only groups (e.g. check-in
+  // classrooms) are never in `plan`, so they're never pruned.
+  if (PRUNE) {
+    const shouldHave = new Set(p.members.map((m) => peopleMap[m.pcoPersonId]?.b1Id).filter(Boolean));
+    for (const [personId, rowId] of existing) {
+      if (!shouldHave.has(personId)) {
+        await b1(`/membership/groupmembers/${rowId}`, { method: "DELETE" });
+        membersRemoved++;
+      }
+    }
+  }
 }
-console.log(`\n✅ ${created} groups created, ${membersAdded} members added, ${membersSkipped} already present, ${unmappedSkipped} skipped (person not in mapping — re-run after migration)`);
+console.log(`\n✅ ${created} groups created, ${membersAdded} members added, ${membersSkipped} already present, ${membersRemoved} removed (prune), ${unmappedSkipped} skipped (person not in mapping — re-run after migration)`);
