@@ -7,8 +7,8 @@
 // Field type mapping (imperfect ones are reported):
 //   string -> Textbox        text     -> Text Area      date    -> Date
 //   number -> Decimal        boolean  -> Yes/No         phone_number -> Phone Number
-//   dropdown/checkboxes -> Multiple Choice (B1 has no multi-select; single-select approximation)
-//   heading/file/workflow_checkbox -> skipped (no B1 equivalent), listed per form
+//   dropdown -> Multiple Choice (single-select)   checkboxes -> Checkbox (multi-select)
+//   heading/file/workflow_checkbox/address -> skipped (no B1 equivalent), listed per form
 //
 // Idempotent: forms matched by name; existing forms are left untouched.
 
@@ -63,7 +63,7 @@ const TYPE_MAP = {
   boolean: "Yes/No",
   phone_number: "Phone Number",
   dropdown: "Multiple Choice",
-  checkboxes: "Multiple Choice",
+  checkboxes: "Checkbox", // B1 Checkbox = one checkbox per choice (true multi-select)
 };
 const SKIP_TYPES = new Set(["heading", "file", "workflow_checkbox", "address"]);
 
@@ -94,26 +94,23 @@ for (const f of forms) {
       fieldType,
       required: a.required === true,
       choices: choices.length ? choices : undefined,
-      approximated: pcoType === "checkboxes",
     });
   }
   if (questions.length === 0) { emptySkipped.push(f.attributes.name.trim()); continue; }
   plan.push({ name: f.attributes.name.trim(), active: f.attributes.active !== false, questions, skipped });
 }
 
-let totalQ = 0, totalSkipped = 0, approximated = 0;
+let totalQ = 0, totalSkipped = 0;
 for (const p of plan) {
   totalQ += p.questions.length;
   totalSkipped += p.skipped.length;
-  approximated += p.questions.filter((q) => q.approximated).length;
   const notes = [];
   if (p.skipped.length) notes.push(`${p.skipped.length} field(s) skipped`);
-  if (p.questions.some((q) => q.approximated)) notes.push("has multi-select→single-select approximation");
   console.log(`  - ${p.name}  (${p.questions.length} questions${notes.length ? "; " + notes.join("; ") : ""})`);
   for (const s of p.skipped) console.log(`      ⤷ skipped: ${s}`);
 }
 if (emptySkipped.length) console.log(`  (skipping ${emptySkipped.length} empty/abandoned forms: ${[...new Set(emptySkipped)].slice(0,5).join(", ")}…)`);
-console.log(`\nTotals: ${plan.length} forms, ${totalQ} questions (${approximated} multi-select approximated, ${totalSkipped} fields skipped)`);
+console.log(`\nTotals: ${plan.length} forms, ${totalQ} questions (${totalSkipped} fields skipped)`);
 if (!APPLY) process.exit(0);
 
 const existing = new Map((((await b1("/membership/forms")) ?? [])).map((f) => [f.name?.trim().toLowerCase(), f]));
