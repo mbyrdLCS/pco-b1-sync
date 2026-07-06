@@ -22,6 +22,7 @@ export type B1Person = {
     state?: string | null;
     zip?: string | null;
   };
+  photo?: string | null;
   birthDate?: string | null;
   anniversary?: string | null;
   gender?: string | null;

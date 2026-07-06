@@ -15,6 +15,9 @@ export type NormalizedPerson = {
   gender?: string | null;
   email?: string | null;
   mobilePhone?: string | null;
+  homePhone?: string | null;
+  workPhone?: string | null;
+  photo?: string | null;
   primaryCampusPcoId?: string | null;
   child?: boolean;
   address?: {
@@ -105,8 +108,23 @@ function normalize(
   const phoneRefs = asArray(p.relationships?.phone_numbers?.data);
   const addressRefs = asArray(p.relationships?.addresses?.data);
   const email = pickPrimary(emailRefs, emailById)?.address as string | undefined;
-  const phone = pickPrimary(phoneRefs, phoneById)?.number as string | undefined;
   const addr = pickPrimary(addressRefs, addressById);
+
+  // Map phones by their PCO location so Home lines don't land in B1's mobile
+  // field. Within each type, prefer the primary-flagged number.
+  const phones = phoneRefs
+    .map((r) => phoneById.get(r.id))
+    .filter(Boolean) as Record<string, unknown>[];
+  const phoneOf = (loc: string) => {
+    const ofType = phones.filter((x) => x.location === loc);
+    const hit = ofType.find((x) => x.primary === true) ?? ofType[0];
+    return (hit?.number as string) ?? null;
+  };
+  const mobile = phoneOf("Mobile") ?? phoneOf("Other");
+
+  // Real profile photos only — PCO serves generated initials for everyone else
+  const avatar = (a.avatar as string) || "";
+  const photo = avatar && !avatar.includes("/initials/") ? avatar : null;
   const birthdate = a.birthdate as string | null;
   const anniversary = a.anniversary as string | null;
   const campusRef = p.relationships?.primary_campus?.data;
@@ -121,7 +139,10 @@ function normalize(
     birthdate: birthdate ? `${birthdate}T00:00:00.000Z` : null,
     gender: (a.gender as string) ?? null,
     email: email ?? null,
-    mobilePhone: phone ?? null,
+    mobilePhone: mobile,
+    homePhone: phoneOf("Home"),
+    workPhone: phoneOf("Work"),
+    photo,
     primaryCampusPcoId,
     child: a.child === true,
     address: addr

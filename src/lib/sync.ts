@@ -38,12 +38,18 @@ function toB1Person(
     contactInfo: {
       email: n.email ?? null,
       mobilePhone: n.mobilePhone ?? null,
+      homePhone: n.homePhone ?? null,
+      workPhone: n.workPhone ?? null,
       address1: n.address?.line1 ?? null,
       address2: n.address?.line2 ?? null,
       city: n.address?.city ?? null,
       state: n.address?.state ?? null,
       zip: n.address?.zip ?? null,
     },
+    // NOTE: photo is intentionally NOT sent here. B1 crashes on photo:null
+    // (PersonController checks !== undefined but not null before .startsWith)
+    // and only re-hosts photos sent as base64 data URLs. Photos are imported
+    // separately by scripts/import-photos.mjs after the people migration.
     birthDate: n.birthdate ?? null,
     anniversary: n.anniversary ?? null,
     gender: n.gender ?? null,
