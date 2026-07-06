@@ -8,7 +8,8 @@
 //   string -> Textbox        text     -> Text Area      date    -> Date
 //   number -> Decimal        boolean  -> Yes/No         phone_number -> Phone Number
 //   dropdown -> Multiple Choice (single-select)   checkboxes -> Checkbox (multi-select)
-//   heading/file/workflow_checkbox/address -> skipped (no B1 equivalent), listed per form
+//   address -> expanded into four Textbox questions (Street/City/State/Zip)
+//   heading/file/workflow_checkbox -> skipped (no B1 equivalent), listed per form
 //
 // Idempotent: forms matched by name; existing forms are left untouched.
 
@@ -65,7 +66,7 @@ const TYPE_MAP = {
   dropdown: "Multiple Choice",
   checkboxes: "Checkbox", // B1 Checkbox = one checkbox per choice (true multi-select)
 };
-const SKIP_TYPES = new Set(["heading", "file", "workflow_checkbox", "address"]);
+const SKIP_TYPES = new Set(["heading", "file", "workflow_checkbox"]);
 
 console.log(APPLY ? "\nAPPLY MODE — creating in B1\n" : "\nDRY RUN — no changes will be made (use --apply to create)\n");
 
@@ -86,6 +87,15 @@ for (const f of forms) {
     const a = fld.attributes;
     const pcoType = a.field_type;
     if (SKIP_TYPES.has(pcoType)) { skipped.push(`${a.label} (${pcoType})`); continue; }
+    if (pcoType === "address") {
+      // B1 has no structured address field — expand into four Textboxes so
+      // the form still collects the same information
+      const base = (a.label ?? "Address").slice(0, 200);
+      for (const part of ["Street Address", "City", "State", "Zip"]) {
+        questions.push({ title: `${base} — ${part}`.slice(0, 255), fieldType: "Textbox", required: a.required === true });
+      }
+      continue;
+    }
     const fieldType = TYPE_MAP[pcoType] ?? "Textbox";
     const choices = (optsByField[fld.id] ?? []).map((label) => ({ value: label, text: label }));
     questions.push({
