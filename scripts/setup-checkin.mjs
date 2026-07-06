@@ -171,7 +171,7 @@ for (const [campusName, services] of plan) {
       if (!group) {
         group = (await b1json("/membership/groups", {
           method: "POST",
-          body: JSON.stringify([{ name: groupName, categoryName: svcName, trackAttendance: true, printNametag: true, parentPickup: true, about: ages || "", tags: "standard" }]),
+          body: JSON.stringify([{ name: groupName, categoryName: svcName, trackAttendance: true, printNametag: true, parentPickup: true, about: ages || "", tags: "checkin" }]),
         }))[0];
         groupIdx.set(groupName.toLowerCase(), group); created.groups++;
       }
