@@ -155,7 +155,6 @@ export async function syncPeople(
   const campusMap = await getCampusMap(true); // ensure all B1 campuses exist up front
   const householdLookup = await getHouseholdLookup(); // ensure B1 households + roles
   const results: SyncResult[] = [];
-  const toRecord: { pcoId: string; b1Id: string; updatedAt?: string }[] = [];
 
   for (const batch of chunk(people, batchSize)) {
     const payloads = batch.map((n) =>
@@ -163,6 +162,7 @@ export async function syncPeople(
     );
     try {
       const saved = await b1SavePeople(payloads);
+      const toRecord: { pcoId: string; b1Id: string; updatedAt?: string }[] = [];
       batch.forEach((n, i) => {
         const s = saved[i];
         const name = `${n.firstName} ${n.lastName}`.trim();
@@ -178,6 +178,10 @@ export async function syncPeople(
           results.push({ pcoId: n.pcoId, name, error: "B1 returned no id" });
         }
       });
+      // Persist per batch, not once at the end: if a large run is interrupted
+      // (timeout, crash), completed batches stay mapped and a re-run resumes
+      // as updates instead of duplicating the people already created.
+      await setMappings(toRecord);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       for (const n of batch) {
@@ -189,8 +193,6 @@ export async function syncPeople(
       }
     }
   }
-
-  await setMappings(toRecord); // single mapping write for the whole run
 
   return {
     total: people.length,

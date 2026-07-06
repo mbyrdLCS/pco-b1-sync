@@ -25,6 +25,24 @@ if (!APP_ID || !SECRET) {
 }
 const AUTH = "Basic " + Buffer.from(`${APP_ID}:${SECRET}`).toString("base64");
 
+// ─── SAFETY LOCK ───────────────────────────────────────────────────────────
+// This script MUTATES a Planning Center org (creates/deletes/modifies data).
+// It must only ever run against the ChurchApps TEST org. Refuse anything else.
+const TEST_ORG_ID = "430310";
+{
+  const res = await fetch(`${BASE}/people/v2/people?per_page=1`, { headers: { Authorization: AUTH } });
+  const orgId = String((await res.json())?.meta?.parent?.id ?? "unknown");
+  const allowed = process.env.FORCE_PCO_ORG || TEST_ORG_ID;
+  if (orgId !== String(allowed)) {
+    console.error(`SAFETY STOP: .env.local points at PCO org ${orgId} — NOT the test org (${TEST_ORG_ID}).`);
+    console.error("This script writes/deletes Planning Center data and must never touch a real church.");
+    console.error("If you are absolutely sure, re-run with FORCE_PCO_ORG=" + orgId);
+    process.exit(1);
+  }
+}
+// ───────────────────────────────────────────────────────────────────────────
+
+
 const N = parseInt(process.argv[2] || "1000", 10);
 const RUN_TAG = process.argv[3] || `sim${Date.now()}`;
 const CONCURRENCY = 6;

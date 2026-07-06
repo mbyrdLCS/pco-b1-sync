@@ -14,6 +14,24 @@ for (const line of envText.split("\n")) {
 const BASE = env.PCO_API_BASE || "https://api.planningcenteronline.com";
 const AUTH = "Basic " + Buffer.from(`${env.PCO_APP_ID}:${env.PCO_SECRET}`).toString("base64");
 
+// ─── SAFETY LOCK ───────────────────────────────────────────────────────────
+// This script MUTATES a Planning Center org (creates/deletes/modifies data).
+// It must only ever run against the ChurchApps TEST org. Refuse anything else.
+const TEST_ORG_ID = "430310";
+{
+  const res = await fetch(`${BASE}/people/v2/people?per_page=1`, { headers: { Authorization: AUTH } });
+  const orgId = String((await res.json())?.meta?.parent?.id ?? "unknown");
+  const allowed = process.env.FORCE_PCO_ORG || TEST_ORG_ID;
+  if (orgId !== String(allowed)) {
+    console.error(`SAFETY STOP: .env.local points at PCO org ${orgId} — NOT the test org (${TEST_ORG_ID}).`);
+    console.error("This script writes/deletes Planning Center data and must never touch a real church.");
+    console.error("If you are absolutely sure, re-run with FORCE_PCO_ORG=" + orgId);
+    process.exit(1);
+  }
+}
+// ───────────────────────────────────────────────────────────────────────────
+
+
 const CAMPUSES = process.argv.slice(2);
 if (CAMPUSES.length === 0) {
   console.error("Usage: node scripts/distribute-campuses.mjs <campusId> [campusId...]");

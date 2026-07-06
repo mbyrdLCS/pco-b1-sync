@@ -18,8 +18,11 @@ export async function GET(req: Request) {
 
   const startedAt = Date.now();
   // Look back from the last cursor; overlap 10 min for safety (re-sync is idempotent).
+  // `?since=<ISO>` overrides — used to seed the cursor after a large initial
+  // migration so the first cron doesn't attempt a full-org sweep.
+  const override = new URL(req.url).searchParams.get("since");
   const stored = hasDb() ? await getState("reconcile_since") : null;
-  const cutoff = stored ?? "1970-01-01T00:00:00Z";
+  const cutoff = override ?? stored ?? "1970-01-01T00:00:00Z";
 
   const people = await pcoListPeopleUpdatedSince(cutoff);
   const summary = await syncPeople(people);
