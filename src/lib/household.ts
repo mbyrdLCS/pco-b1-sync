@@ -4,8 +4,13 @@
 // then the largest).
 
 import { pcoListHouseholds, pcoFetch, type PcoHousehold } from "./pco";
-import { b1CreateHousehold } from "./b1";
-import { getHouseholdB1Id, setHouseholdMapping } from "./mapping";
+import { b1CreateHousehold, b1CreateHouseholds } from "./b1";
+import {
+  getHouseholdB1Id,
+  setHouseholdMapping,
+  setHouseholdMappings,
+  allHouseholdMappings,
+} from "./mapping";
 
 export type HouseholdAssignment = {
   b1HouseholdId: string;
@@ -61,11 +66,34 @@ export async function getHouseholdLookup(): Promise<Record<string, HouseholdAssi
     }
   }
 
-  const lookup: Record<string, HouseholdAssignment> = {};
+  // resolve each person's best household first, so we only create the
+  // households actually used (multi-household losers are skipped)
+  const bestByPerson = new Map<string, { h: PcoHousehold; child: boolean }>();
+  const usedHouseholds = new Map<string, PcoHousehold>();
   for (const [personId, candidates] of candidatesByPerson) {
     const best = pickBest(candidates, personId);
     if (!best) continue;
-    const b1HouseholdId = await ensureB1Household(best.h.id, best.h.name);
+    bestByPerson.set(personId, best);
+    usedHouseholds.set(best.h.id, best.h);
+  }
+
+  // batch-create the missing B1 households (100/POST instead of one each —
+  // at thousands of households the difference is ~30 minutes vs ~1 minute)
+  const householdMap = await allHouseholdMappings();
+  const missing = [...usedHouseholds.values()].filter((h) => !householdMap[h.id]);
+  const CHUNK = 100;
+  for (let i = 0; i < missing.length; i += CHUNK) {
+    const slice = missing.slice(i, i + CHUNK);
+    const ids = await b1CreateHouseholds(slice.map((h) => cleanName(h.name)));
+    const pairs = slice.map((h, j) => ({ pcoHouseholdId: h.id, b1HouseholdId: ids[j] }));
+    await setHouseholdMappings(pairs); // persist per chunk — interruption-safe
+    for (const p of pairs) householdMap[p.pcoHouseholdId] = p.b1HouseholdId;
+  }
+
+  const lookup: Record<string, HouseholdAssignment> = {};
+  for (const [personId, best] of bestByPerson) {
+    const b1HouseholdId = householdMap[best.h.id];
+    if (!b1HouseholdId) continue;
     const role = roleFor(best.h, personId, best.child);
     // A household with 2+ adults (a head + spouse) implies the adults are married.
     const adultCount = best.h.members.filter((m) => !m.child).length;

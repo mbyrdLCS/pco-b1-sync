@@ -96,11 +96,17 @@ export async function b1DeletePerson(id: string): Promise<void> {
 }
 
 export async function b1CreateHousehold(name: string): Promise<string> {
+  return (await b1CreateHouseholds([name]))[0];
+}
+
+/** Batch-create households; returns ids in input order. */
+export async function b1CreateHouseholds(names: string[]): Promise<string[]> {
+  if (names.length === 0) return [];
   const saved = await b1Fetch<{ id: string }[] | { id: string }>("/membership/households", {
     method: "POST",
-    body: JSON.stringify([{ name }]),
+    body: JSON.stringify(names.map((name) => ({ name }))),
   });
-  return (Array.isArray(saved) ? saved[0] : saved).id;
+  return (Array.isArray(saved) ? saved : [saved]).map((h) => h.id);
 }
 
 export async function b1ListCampuses(): Promise<{ id: string; name: string }[]> {

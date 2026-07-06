@@ -192,17 +192,51 @@ export async function setHouseholdMapping(
   pcoHouseholdId: string,
   b1HouseholdId: string,
 ): Promise<void> {
+  await setHouseholdMappings([{ pcoHouseholdId, b1HouseholdId }]);
+}
+
+/** Bulk household mapping upsert (single statement set / single file write). */
+export async function setHouseholdMappings(
+  entries: { pcoHouseholdId: string; b1HouseholdId: string }[],
+): Promise<void> {
+  if (entries.length === 0) return;
   if (hasDb()) {
     await ensureSchema();
-    await getSql()`
-      insert into household_map (pco_household_id, b1_household_id, synced_at)
-      values (${pcoHouseholdId}, ${b1HouseholdId}, now())
-      on conflict (pco_household_id) do update set b1_household_id = excluded.b1_household_id, synced_at = now()
-    `;
+    const sql = getSql();
+    const CHUNK = 500;
+    for (let i = 0; i < entries.length; i += CHUNK) {
+      const slice = entries.slice(i, i + CHUNK);
+      const tuples: string[] = [];
+      const params: string[] = [];
+      slice.forEach((e, j) => {
+        tuples.push(`($${j * 2 + 1}, $${j * 2 + 2}, now())`);
+        params.push(e.pcoHouseholdId, e.b1HouseholdId);
+      });
+      await sql.query(
+        `insert into household_map (pco_household_id, b1_household_id, synced_at) values ` +
+          tuples.join(", ") +
+          ` on conflict (pco_household_id) do update set b1_household_id = excluded.b1_household_id, synced_at = now()`,
+        params,
+      );
+    }
     return;
   }
   const d = await fileRead();
   d.households = d.households ?? {};
-  d.households[pcoHouseholdId] = b1HouseholdId;
+  for (const e of entries) d.households[e.pcoHouseholdId] = e.b1HouseholdId;
   await fileWrite(d);
+}
+
+/** All household mappings at once (for bulk backfill lookups). */
+export async function allHouseholdMappings(): Promise<Record<string, string>> {
+  if (hasDb()) {
+    await ensureSchema();
+    const rows = (await getSql()`select pco_household_id, b1_household_id from household_map`) as {
+      pco_household_id: string;
+      b1_household_id: string;
+    }[];
+    return Object.fromEntries(rows.map((r) => [r.pco_household_id, r.b1_household_id]));
+  }
+  const d = await fileRead();
+  return d.households ?? {};
 }
