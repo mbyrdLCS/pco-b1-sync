@@ -6,9 +6,9 @@
 // Reads active weekly PCO Check-Ins events + their locations (classrooms) and
 // creates the B1 equivalents:
 //   PCO campus              -> B1 campus            (created if missing)
-//   event minus its time    -> B1 service           ("Bedford Kids")
+//   event minus its time    -> B1 service           ("Northside Kids")
 //   the time in the name    -> B1 serviceTime       ("9:00am")
-//   event locations         -> B1 groups            ("Nursery (Bedford)", ages in about)
+//   event locations         -> B1 groups            ("Nursery (Northside)", ages in about)
 //   location@time           -> B1 groupServiceTimes (links rooms to times)
 //
 // Idempotent: existing campuses/services/times/groups are matched by name and
@@ -63,7 +63,7 @@ console.log(APPLY ? "\nAPPLY MODE — creating in B1\n" : "\nDRY RUN — no chan
 // 1. PCO campuses -> matching tokens
 const pcoCampuses = (await pco("/people/v2/campuses?per_page=100")).data.map((c) => {
   const name = c.attributes.name.trim();
-  const key = name.toLowerCase().replace(/\(.*?\)/g, "").replace(/\boutpost\b|\bservice\b/g, "").trim();
+  const key = name.toLowerCase().replace(/\(.*?\)/g, "").replace(/\b(?:campus|outpost|site|location|service)\b/g, "").trim();
   return { name, words: key.split(/\s+/).filter(Boolean) };
 });
 
